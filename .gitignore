@@ -17,3 +17,10 @@ Thumbs.db
 
 # Environment files
 package-lock.json
+
+# Local AI tooling (Serena, GitNexus)
+.serena/
+.gitnexus/
+.claude/skills/gitnexus/
+CLAUDE.md
+AGENTS.md
