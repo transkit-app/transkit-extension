@@ -2333,6 +2333,12 @@ function registerSelectionMode() {
       if (type === 'keydown') {
         handleSelectionPopupKeydown(e);
       }
+      // Focus can sit on the suggestion's model switcher; its Tab/Esc handler
+      // would never see the key otherwise
+      const focused = overlayRoot?.activeElement;
+      if (currentKeyHandler && focused && currentSuggestion?.element.contains(focused)) {
+        currentKeyHandler(e);
+      }
     }, true);
   });
 
