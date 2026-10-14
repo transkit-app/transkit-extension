@@ -37,5 +37,12 @@ export default defineConfig([
       "prettier/prettier": "error",
       "no-empty": ["error", { allowEmptyCatch: true }]
     }
+  },
+  {
+    // Content scripts are classic scripts sharing one isolated world, not modules
+    files: ["extension/src/content-script*.js"],
+    languageOptions: {
+      sourceType: "script"
+    }
   }
 ]);

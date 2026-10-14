@@ -346,7 +346,8 @@ async function handleLineByLineTranslate(
         targetLanguage: settings.nativeLanguageCode || "vi",
         sourceLanguage: settings.targetLanguageCode || "en",
         useAutoDetect: false,
-        customPrompt: customPrompt
+        customPrompt: customPrompt,
+        preserveFormatting: true // segments can contain inline HTML
       });
       
       if (res?.ok && res.result?.translation) {

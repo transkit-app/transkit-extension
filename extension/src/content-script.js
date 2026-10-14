@@ -1,8 +1,11 @@
+// Defined in content-script-granularity.js, which the manifest loads first
+/* global handleLineByLineTranslate, handleSentenceBySentenceTranslate */
+
 let normalizeLanguageToCode;
 let i18n;
 let tts;
 
-const TRANSLATION_COMMAND_PATTERN = /!!([a-zA-ZÀ-ÿ\-]+)$/i;
+const TRANSLATION_COMMAND_PATTERN = /!!([a-zA-ZÀ-ÿ-]+)$/i;
 
 let isTranslating = false;
 let debounceTimer = null;
@@ -508,7 +511,7 @@ function shouldTriggerInstant(text) {
   // Don't trigger if:
   if (!text || text.trim().length < 5) return false; // Too short
   if (/^https?:\/\//.test(text)) return false; // URL
-  if (/^[!@#$%^&*()_+=\[\]{};':"\\|,.<>/?`~-]+$/.test(text)) return false; // Only special chars
+  if (/^[!@#$%^&*()_+=[\]{};':"\\|,.<>/?`~-]+$/.test(text)) return false; // Only special chars
   return true;
 }
 
@@ -1652,11 +1655,6 @@ function cleanupExtensionElements() {
       hideTranslateIcon();
     }
     
-    // Remove any inline suggestions
-    if (typeof hideSuggestion === 'function') {
-      hideSuggestion();
-    }
-    
     // Clear current suggestion
     if (currentSuggestion) {
       try {
@@ -2302,24 +2300,6 @@ async function translateSelectionWithSource(text, sourceLang, popup, providerId 
   }
 }
 
-function populateLanguageSelector(popup) {
-  const select = popup.querySelector('.bt-selection-lang-select');
-  const languages = [
-    'vi', 'en', 'zh', 'ja', 'ko', 'es', 'fr', 'de'
-  ];
-  
-  languages.forEach(code => {
-    const option = document.createElement('option');
-    option.value = code;
-    option.textContent = i18n.t("lang." + code);
-    select.appendChild(option);
-  });
-  
-  getSettings().then(settings => {
-    select.value = settings.nativeLanguageCode || 'vi';
-  });
-}
-
 let lastPopupCloseTime = 0;
 
 function registerSelectionMode() {
@@ -2332,6 +2312,12 @@ function registerSelectionMode() {
       e.stopImmediatePropagation();
       if (type === 'keydown') {
         handleSelectionPopupKeydown(e);
+      }
+      // Focus can sit on the suggestion's model switcher; its Tab/Esc handler
+      // would never see the key otherwise
+      const focused = overlayRoot?.activeElement;
+      if (currentKeyHandler && focused && currentSuggestion?.element.contains(focused)) {
+        currentKeyHandler(e);
       }
     }, true);
   });
@@ -2864,7 +2850,8 @@ async function handleHoverTranslate(element, settings) {
       nativeLanguageCode: settings.nativeLanguageCode || "en",
       targetLanguage: settings.nativeLanguageCode || "vi", // Translate TO native language
       sourceLanguage: settings.targetLanguageCode || "en", // FROM target language (e.g., English web content)
-      useAutoDetect: false // Fixed Target→Native for hover
+      useAutoDetect: false, // Fixed Target→Native for hover
+      preserveFormatting: true // text is innerHTML
     });
     
     if (res?.ok && res.result?.translation) {

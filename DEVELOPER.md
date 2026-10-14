@@ -80,7 +80,7 @@ Rules when adding floating UI:
 | `get-settings` | any → background | Read settings |
 | `set-settings` | popup page, domain toggles → background | **Replace** the whole settings object |
 | `update-settings` | content script → background | **Merge** a `patch` into the latest stored settings (serialized) |
-| `translate` | content script → background | Translate text with the active or a given `providerId` |
+| `translate` | content script → background | Translate text with the active or a given `providerId`. Set `preserveFormatting: true` only when sending real HTML (hover translate); it is converted to Markdown and back. Otherwise text is sent as-is |
 | `offscreen-translate` | background → offscreen | Translate with Chrome Built-in AI |
 | `tts-play` / `play-tts` | content script → background → offscreen | Play TTS audio |
 | `open-options` | content script → background | Open the options page |
@@ -142,13 +142,12 @@ transkit-extension/
 │       │   └── hover-translate.css  # Hover translations injected into pages (global)
 │       └── icons/
 ├── landing/                         # Static website, deployed to GitHub Pages
-├── src/                             # Legacy copies from an older layout, not used
+├── tests/e2e/                       # Playwright end-to-end tests
 ├── eslint.config.mjs
 ├── .prettierrc
-└── package.json                     # Lint tooling only
+├── playwright.config.mjs
+└── package.json                     # Lint and test tooling only
 ```
-
-`extension/src/content-script-hover.js` and `content-script-helpers.js` are drafts that the manifest does not load.
 
 ## Development Setup
 
@@ -171,14 +170,35 @@ Other providers only need their API key or endpoint in the settings.
 
 ### Testing
 
-There are no automated tests. After a change, check the affected flows on a few real sites:
+#### Automated end-to-end tests
 
--   `!!lang` with and without the confirmation suggestion
--   Instant mode on an enabled domain (label, suggestion, Tab/Esc, model switcher)
--   Select-to-Translate (icon, popup, pin, typing in the source box, copy, TTS)
--   Hover translate (inject and replace modes)
--   A page with hostile CSS (`html { font-size: 62.5% }`, `body { transform: ... }`, `div { font-size: 8px !important }`) and sites such as YouTube
+`tests/e2e/` holds a [Playwright](https://playwright.dev) suite that loads the unpacked extension into headless Chromium:
+
+```bash
+npm install
+npx playwright install chromium   # once
+npm run test:e2e
+```
+
+-   `tests/e2e/server.mjs` serves `pages/hostile.html` (a page with CSS that used to break TransKit's UI) and a **mock OpenAI-compatible endpoint**. The suite seeds two `custom` providers ("Mock A" / "Mock B") pointing at it, so tests run offline. The mock replies `<model>:<target language>:<text>`. Text containing `[slow]` is answered after 1.5 s.
+-   TransKit's UI lives in a closed shadow root that Playwright locators cannot reach. The `Overlay` helper in `fixtures.mjs` reads it through CDP (`DOM.getDocument` with `pierce: true`): `find`, `box`, `computed`, `eval`, `click`.
+-   Pass settings overrides per test with `test.use({ settings: { ... } })`.
+-   The suite runs in GitHub Actions on pull requests that touch the extension (`.github/workflows/e2e.yml`).
+
+#### Manual checks
+
+The suite does not cover everything. After a change, also check the affected flows on a few real sites:
+
+-   Real translation providers, including Chrome Built-in AI
+-   Hover translate (inject and replace modes) and TTS
+-   Sites such as YouTube, Gmail and pages with `<dialog>` modals
 -   Reloading the extension while a page is open: content scripts must not throw "Extension context invalidated" (see `EXTENSION_CONTEXT_FIX.md`)
+
+### Releasing
+
+1.  Bump `version` in both `extension/manifest.json` and `package.json`, and add a changelog entry to `README.md`.
+2.  Run `npm run test:e2e`.
+3.  Run `npm run package` to build `dist/transkit-<version>.zip` (hidden files excluded), then upload it to the Chrome Web Store.
 
 ## Key APIs Used
 

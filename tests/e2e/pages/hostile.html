@@ -1,0 +1,61 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Hostile page</title>
+    <!-- CSS that broke TransKit UI on real sites before it was isolated -->
+    <style>
+      html {
+        font-size: 62.5%;
+      }
+      body {
+        margin: 0;
+        padding: 40px;
+        transform: translateZ(0);
+        font: 16px Georgia;
+      }
+      div,
+      span,
+      label,
+      button,
+      select,
+      textarea {
+        color: red !important;
+        font-size: 8px !important;
+        letter-spacing: 4px !important;
+      }
+      * {
+        box-sizing: content-box !important;
+      }
+      transkit-overlay {
+        display: none;
+      }
+      p {
+        width: 600px;
+        font-size: 18px;
+        line-height: 1.6;
+      }
+    </style>
+  </head>
+  <body>
+    <p id="p1">Hello world, this is the first paragraph to translate.</p>
+    <p id="p2">
+      &lt;img src=x onerror="window.__xss=1"&gt; markup shown as text.
+    </p>
+    <p id="p3">Third paragraph for pinned auto load.</p>
+    <p id="p4">
+      One of the best stories I have ever read. The ending was unexpected and
+      touching, and I would gladly recommend it to anyone who loves a good book.
+    </p>
+    <textarea id="field" style="width: 500px; height: 60px"></textarea>
+    <div style="height: 1500px"></div>
+    <script>
+      // Page-side probes the tests read back
+      window.__keys = [];
+      document.addEventListener("keydown", (e) => window.__keys.push(e.key));
+      document.onmouseup = function () {
+        window.__pageMouseUps = (window.__pageMouseUps || 0) + 1;
+      };
+    </script>
+  </body>
+</html>

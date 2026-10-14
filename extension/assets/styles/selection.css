@@ -476,12 +476,12 @@
 }
 
 .bt-speak-btn:hover {
-  color: var(--bt-color-primary);
+  color: var(--bt-color-primary-background);
   background-color: rgba(0, 0, 0, 0.05);
 }
 
 .bt-speak-loading {
-  color: var(--bt-color-primary);
+  color: var(--bt-color-primary-background);
   pointer-events: none;
 }
 
@@ -491,6 +491,17 @@
 
 .bt-speak-loading .bt-wave-2 {
   animation: bt-wave 1s infinite 0.3s;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes bt-wave {
