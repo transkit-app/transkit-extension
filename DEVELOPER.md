@@ -143,14 +143,11 @@ transkit-extension/
 │       └── icons/
 ├── landing/                         # Static website, deployed to GitHub Pages
 ├── tests/e2e/                       # Playwright end-to-end tests
-├── src/                             # Legacy copies from an older layout, not used
 ├── eslint.config.mjs
 ├── .prettierrc
 ├── playwright.config.mjs
 └── package.json                     # Lint and test tooling only
 ```
-
-`extension/src/content-script-hover.js` and `content-script-helpers.js` are drafts that the manifest does not load.
 
 ## Development Setup
 

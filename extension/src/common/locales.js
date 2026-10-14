@@ -194,7 +194,6 @@ export const locales = {
     "popup.shortcutCtrl": "Ctrl/Cmd",
     "popup.shortcutShift": "Shift",
     "popup.shortcutAlt": "Alt",
-    "popup.uniqueMode": "Unique Mode (Show only one translation at a time)",
     "popup.promptCustomization": "Tùy chỉnh Prompt",
     "popup.promptHelp": "Tùy chỉnh prompt dịch để phù hợp với nhu cầu cụ thể của bạn (ví dụ: kỹ thuật, thông dụng, y tế)",
     "popup.systemPrompt": "System Prompt (Chỉ đọc)",
