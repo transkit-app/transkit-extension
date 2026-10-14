@@ -143,6 +143,7 @@ Open the extension popup to customize:
 - **Fix**: Changing languages in the popup could reset other settings.
 - **Fix**: The `!!lang` suggestion always showed "Chrome Built-in AI" instead of the provider actually used.
 - **Fix**: Tab now applies an Instant suggestion after switching its model.
+- **Fix**: Text that looks like HTML (e.g. a selected code snippet such as `<div>`) is no longer stripped before translation.
 - **Security**: Selected text and translations are always displayed as plain text, never as HTML.
 
 ### v1.2.1

@@ -2850,7 +2850,8 @@ async function handleHoverTranslate(element, settings) {
       nativeLanguageCode: settings.nativeLanguageCode || "en",
       targetLanguage: settings.nativeLanguageCode || "vi", // Translate TO native language
       sourceLanguage: settings.targetLanguageCode || "en", // FROM target language (e.g., English web content)
-      useAutoDetect: false // Fixed Target→Native for hover
+      useAutoDetect: false, // Fixed Target→Native for hover
+      preserveFormatting: true // text is innerHTML
     });
     
     if (res?.ok && res.result?.translation) {

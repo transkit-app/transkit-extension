@@ -80,7 +80,7 @@ Rules when adding floating UI:
 | `get-settings` | any → background | Read settings |
 | `set-settings` | popup page, domain toggles → background | **Replace** the whole settings object |
 | `update-settings` | content script → background | **Merge** a `patch` into the latest stored settings (serialized) |
-| `translate` | content script → background | Translate text with the active or a given `providerId` |
+| `translate` | content script → background | Translate text with the active or a given `providerId`. Set `preserveFormatting: true` only when sending real HTML (hover translate); it is converted to Markdown and back. Otherwise text is sent as-is |
 | `offscreen-translate` | background → offscreen | Translate with Chrome Built-in AI |
 | `tts-play` / `play-tts` | content script → background → offscreen | Play TTS audio |
 | `open-options` | content script → background | Open the options page |

@@ -150,7 +150,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "translate") {
     readSettings().then(async (settings) => {
       // Extract payload using keys sent by content-script.js
-      const { text, nativeLanguageCode, targetLanguage, sourceLanguage, providerId } = message.payload;
+      const { text, nativeLanguageCode, targetLanguage, sourceLanguage, providerId, preserveFormatting } = message.payload;
       
       // Map to standardized keys for AIProviderService
       // Use 'auto' if sourceLanguage is not explicitly provided
@@ -171,8 +171,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         let textToTranslate = text;
         let hasFormatting = false;
         
-        // Apply format conversion for all providers
-        if (shouldConvertFormat(text)) {
+        // Only for callers that send real HTML (hover translate). Plain text that
+        // merely looks like markup, e.g. a selected "<img ...>" code snippet,
+        // would otherwise lose those characters to htmlToMarkdown().
+        if (preserveFormatting && shouldConvertFormat(text)) {
           textToTranslate = htmlToMarkdown(text);
           hasFormatting = true;
         }
