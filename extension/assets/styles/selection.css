@@ -1,7 +1,10 @@
 @import url("./tokens.css");
 @import url("./common.css");
 
-/* Select-to-Translate Styles */
+/* Select-to-Translate Styles
+ * Loaded into the overlay's Shadow DOM by content-script.js (not via the
+ * manifest). Imports are stripped there and rem values are converted to px,
+ * so tokens.css is loaded alongside this file explicitly. */
 
 .bt-translate-icon {
   display: flex;
@@ -142,6 +145,39 @@
   float:right;
 }
 
+.bt-selection-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bt-selection-pin {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--bt-color-text-muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.bt-selection-pin:hover {
+  color: var(--bt-color-text-default);
+  background-color: rgba(0, 0, 0, 0.05);
+}
+
+.bt-selection-pin[aria-pressed="true"] {
+  color: var(--bt-color-primary-background);
+  transform: rotate(-30deg);
+}
+
+.bt-selection-popup.bt-pinned {
+  border-color: var(--bt-color-primary-border);
+}
+
 .bt-selection-close {
   background: none;
   border: none;
@@ -221,55 +257,28 @@
   flex-direction: column;
 }
 
-.bt-selection-copy-btn {
-  position: absolute;
-  right: 0.25rem;
-  bottom: 0.25rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0.25rem;
-  background: var(--bt-color-white);
-  border: 1px solid var(--bt-color-border-default);
-  border-radius: var(--bt-radius-small);
-  color: var(--bt-color-text-muted);
-  cursor: pointer;
-  transition: all 0.2s ease;
-  z-index: 2;
-  /* Ensure button has minimum size */
-  min-width: 24px;
-  min-height: 24px;
-  /* Add shadow to make it stand out from text */
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+/* Copy sits in the same flex row as the text (mirroring the speak button on
+ * the left) instead of floating over it, so it can never cover the last
+ * characters. Shares the ghost look from .bt-speak-btn. */
+.bt-speak-btn.bt-selection-copy-btn {
+  margin-left: auto;
 }
 
-.bt-selection-copy-btn:hover {
+.bt-speak-btn.bt-selection-copy-btn:hover {
   color: var(--bt-color-primary-background);
-  border-color: var(--bt-color-primary-border);
-  background: var(--bt-color-primary-background);
-  box-shadow: var(--bt-shadow-default);
 }
 
-.bt-copy-feedback {
-  position: absolute;
-  right: calc(100% + 8px);
-  top: 50%;
-  transform: translateY(-50%);
-  background: var(--bt-color-text-default);
-  color: var(--bt-color-white);
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 10px;
-  font-weight: 600;
-  white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-  transition: all 0.2s ease;
+.bt-selection-copy-btn .bt-copied-icon,
+.bt-selection-copy-btn.bt-copied .bt-copy-icon {
+  display: none;
 }
 
-.bt-selection-copy-btn.bt-copied .bt-copy-feedback {
-  opacity: 1;
-  transform: translateY(-50%) translateX(-4px);
+.bt-selection-copy-btn.bt-copied .bt-copied-icon {
+  display: block;
+}
+
+.bt-speak-btn.bt-selection-copy-btn.bt-copied {
+  color: #16a34a;
 }
 
 .bt-selection-source-select,
@@ -342,6 +351,35 @@
   word-break: break-word;
   white-space: pre-wrap;
   flex: 1;
+}
+
+.bt-selection-source-input {
+  flex: 1;
+  display: block;
+  width: 100%;
+  min-height: 21px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  resize: none;
+  overflow: hidden;
+  font-family: inherit;
+  font-size: var(--bt-font-size-small);
+  line-height: 1.5;
+  color: var(--bt-color-text-default);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.bt-selection-source-input::placeholder {
+  color: var(--bt-color-text-muted);
+  font-style: italic;
+}
+
+.bt-selection-original .bt-selection-text-container:focus-within {
+  box-shadow: 0 0 0 1px var(--bt-color-primary-border);
 }
 
 .bt-loading-text {
@@ -430,6 +468,11 @@
   flex-shrink: 0;
   margin-top: 0; /* Align with first line of text */
   margin-left: 0;
+}
+
+.bt-selection-text-container > .bt-speak-btn {
+  position: sticky;
+  top: 0;
 }
 
 .bt-speak-btn:hover {

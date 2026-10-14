@@ -18,6 +18,18 @@ let isIMEComposing = false; // Track if IME composition is active
 let selectionIcon = null;
 let selectionPopup = null;
 let selectedText = "";
+let isSelectionPopupPinned = false;
+let selectionInputTimer = null;
+let selectionTranslateSeq = 0; // Drops stale responses when translations overlap
+
+// Isolated overlay (Shadow DOM + top layer) that hosts the icon and popup
+let overlayHost = null;
+let overlayRoot = null;
+let overlayCssPromise = null;
+
+const OVERLAY_HOST_TAG = "transkit-overlay";
+const OVERLAY_STYLESHEETS = ["assets/styles/tokens.css", "assets/styles/selection.css"];
+const SELECTION_INPUT_DELAY_MS = 600;
 
 const commonStyles = {
   fontFamily: "system-ui, sans-serif",
@@ -1387,19 +1399,122 @@ function registerInstantLabelIndicator() {
 // SELECT-TO-TRANSLATE MODE
 // ============================================
 
-function showTranslateIcon(x, y, selection) {
+// The icon and popup render inside a closed Shadow DOM so page CSS cannot
+// leak in, and the host is promoted to the top layer (Popover API) so page
+// transforms / z-index / overflow cannot shift or hide it.
+function loadOverlayCss() {
+  if (!overlayCssPromise) {
+    overlayCssPromise = Promise.all(
+      OVERLAY_STYLESHEETS.map((path) =>
+        fetch(chrome.runtime.getURL(path)).then((res) => res.text())
+      )
+    )
+      .then((sheets) =>
+        sheets
+          .join("\n")
+          // @import would resolve against the page URL inside a <style> tag
+          .replace(/^\s*@import[^;]+;/gm, "")
+          // rem follows the page's <html> font-size (often 62.5%), so pin to px
+          .replace(/(-?\d*\.?\d+)rem\b/g, (_, n) => `${parseFloat(n) * 16}px`)
+      )
+      .catch((error) => {
+        overlayCssPromise = null;
+        throw error;
+      });
+  }
+  return overlayCssPromise;
+}
+
+async function ensureOverlayRoot() {
+  if (overlayHost?.isConnected && overlayRoot) {
+    return overlayRoot;
+  }
+
+  const css = await loadOverlayCss();
+  if (overlayHost?.isConnected && overlayRoot) {
+    return overlayRoot; // Created by a concurrent call
+  }
+
+  // Custom tag so generic page selectors (div, span, ...) never match the host
+  const host = document.createElement(OVERLAY_HOST_TAG);
+  // Inline !important beats any author rule, including page !important rules
+  host.style.cssText = [
+    "all: initial !important",
+    "position: fixed !important",
+    "inset: 0 !important",
+    "width: auto !important",
+    "height: auto !important",
+    "margin: 0 !important",
+    "padding: 0 !important",
+    "border: 0 !important",
+    "background: transparent !important",
+    "overflow: visible !important",
+    "display: block !important",
+    "pointer-events: none !important",
+    "z-index: 2147483647 !important"
+  ].join(";");
+
+  const root = host.attachShadow({ mode: "closed" });
+  const style = document.createElement("style");
+  style.textContent = `${css}
+:host { font-size: 16px; line-height: normal; }
+.bt-translate-icon, .bt-selection-popup { pointer-events: auto; }`;
+  root.appendChild(style);
+
+  document.documentElement.appendChild(host);
+  if (typeof host.showPopover === "function") {
+    host.setAttribute("popover", "manual");
+    host.showPopover();
+  }
+
+  overlayHost = host;
+  overlayRoot = root;
+  return root;
+}
+
+// Re-show so the overlay sits above any top-layer element the page opened since
+function bringOverlayToFront() {
+  if (!overlayHost || typeof overlayHost.showPopover !== "function") return;
+  try {
+    if (overlayHost.matches(":popover-open")) {
+      overlayHost.hidePopover();
+    }
+    overlayHost.showPopover();
+  } catch (e) {}
+}
+
+function removeOverlayIfEmpty() {
+  if (overlayHost && !selectionIcon && !selectionPopup) {
+    overlayHost.remove();
+    overlayHost = null;
+    overlayRoot = null;
+  }
+}
+
+function isEventFromOverlay(e) {
+  return !!overlayHost && e.composedPath().includes(overlayHost);
+}
+
+async function showTranslateIcon(x, y, selection) {
   hideTranslateIcon();
-  
+
   // Check if extension context is still valid
   if (!chrome.runtime?.id) {
     console.log('TransKit: Extension context invalidated, skipping icon creation');
     return;
   }
-  
+
   try {
     const range = selection.getRangeAt(0);
     const rect = range.getBoundingClientRect();
-    
+    const textForIcon = selectedText;
+
+    const root = await ensureOverlayRoot();
+    // Selection changed or was cleared while the stylesheet was loading
+    if (selectedText !== textForIcon || selectionIcon) {
+      return;
+    }
+
     const icon = document.createElement('div');
     icon.className = 'bt-translate-icon bt-vars-container';
     
@@ -1442,9 +1557,10 @@ function showTranslateIcon(x, y, selection) {
       // Pass selection rect instead of icon rect for better positioning
       showTranslationPopup(rect, selectedText, icon.dataset.position);
     });
-    
-    document.body.appendChild(icon);
+
+    root.appendChild(icon);
     selectionIcon = icon;
+    bringOverlayToFront();
   } catch (error) {
     console.log('TransKit: Error creating translate icon:', error.message);
     // Extension context might be invalidated, clean up
@@ -1459,27 +1575,27 @@ function hideTranslateIcon() {
     selectionIcon.remove();
     selectionIcon = null;
   }
+  removeOverlayIfEmpty();
 }
 
 // Helper function to get actual available viewport considering panels/devtools
 function getAvailableViewport() {
   // Get the document's visible area
   const documentElement = document.documentElement;
-  const body = document.body;
-  
+
   // Calculate actual available space
   // Use document.documentElement.clientWidth/Height which excludes scrollbars
-  // and is more accurate for content positioning
+  // and is more accurate for content positioning. body is deliberately not
+  // used: its size is the content box (0px tall on YouTube, whose content
+  // lives in a positioned <ytd-app>), not the viewport.
   const availableWidth = Math.min(
     window.innerWidth,
-    documentElement.clientWidth,
-    body ? body.clientWidth : window.innerWidth
+    documentElement.clientWidth || window.innerWidth
   );
-  
+
   const availableHeight = Math.min(
     window.innerHeight,
-    documentElement.clientHeight,
-    body ? body.clientHeight : window.innerHeight
+    documentElement.clientHeight || window.innerHeight
   );
   
   // Also consider if there are any fixed elements that might reduce available space
@@ -1588,7 +1704,7 @@ function cleanupExtensionElements() {
     }
     
     // Remove any extension-created elements
-    const extensionElements = document.querySelectorAll('.bt-inline-suggestion, .bt-selection-popup, .bt-selection-icon, .bt-toast-notify, .bt-hover-popup');
+    const extensionElements = document.querySelectorAll(`.bt-inline-suggestion, .bt-toast-notify, .bt-hover-popup, ${OVERLAY_HOST_TAG}`);
     extensionElements.forEach(el => {
       try {
         el.remove();
@@ -1653,17 +1769,13 @@ function ensurePopupInViewport(popup, selectionRect) {
     popup.style.setProperty('--bt-arrow-left', `${clampedArrowLeft}px`);
   }
   
-  // Adjust vertical position if popup goes off-screen
-  if (popup.style.top && rect.bottom > viewport.height - 10) {
-    // If using top positioning and popup goes below viewport
-    const newTop = Math.max(10, viewport.height - rect.height - 10);
+  // Adjust vertical position if popup goes off-screen past either edge,
+  // whether it is anchored by top or bottom. Re-anchor by top when clamping
+  // so the result doesn't depend on which edge was used.
+  if (rect.bottom > viewport.height - 10 || rect.top < 10) {
+    const newTop = Math.max(10, Math.min(rect.top, viewport.height - rect.height - 10));
+    popup.style.bottom = '';
     popup.style.top = `${newTop}px`;
-  }
-  
-  if (popup.style.bottom && rect.top < 10) {
-    // If using bottom positioning and popup goes above viewport
-    const newBottom = Math.max(10, viewport.height - rect.height - 10);
-    popup.style.bottom = `${newBottom}px`;
   }
 }
 
@@ -1686,13 +1798,21 @@ async function showTranslationPopup(selectionRect, text, iconPosition) {
     console.log('TransKit: Extension context invalidated, cannot show popup');
     return;
   }
-  
+
+  // A pinned popup keeps its position and just takes the new text
+  if (selectionPopup && isSelectionPopupPinned) {
+    loadTextIntoPinnedPopup(text);
+    hideTranslateIcon();
+    return;
+  }
+
   try {
     hideTranslationPopup();
 
     // Fetch settings first to ensure i18n is updated
     const settings = await getSettings();
-    
+    const root = await ensureOverlayRoot();
+
     const popup = document.createElement('div');
     let iconUrl;
     try {
@@ -1709,7 +1829,15 @@ async function showTranslationPopup(selectionRect, text, iconPosition) {
         ${iconUrl ? `<img src="${iconUrl}" width="19" height="19" alt="Translate" style="float:left;margin-right:4px" />` : '<span style="float:left;margin-right:4px;font-size:19px;">🔄</span>'} 
         <span>${i18n.t("selection.title")}</span>
       </span>
-      <button class="bt-selection-close">×</button>
+      <div class="bt-selection-actions">
+        <button class="bt-selection-pin" title="${i18n.t("selection.pin")}" aria-pressed="false">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="17" x2="12" y2="22"></line>
+            <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"></path>
+          </svg>
+        </button>
+        <button class="bt-selection-close">×</button>
+      </div>
     </div>
     <div class="bt-selection-content">
       <div class="bt-selection-original">
@@ -1725,7 +1853,7 @@ async function showTranslationPopup(selectionRect, text, iconPosition) {
               <path class="bt-wave-1" d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
             </svg>
           </button>
-          <div class="bt-selection-text-content">${text}</div>
+          <textarea class="bt-selection-source-input" rows="1" placeholder="${i18n.t("selection.inputPlaceholder")}"></textarea>
         </div>
       </div>
       <div class="bt-selection-translated">
@@ -1743,11 +1871,11 @@ async function showTranslationPopup(selectionRect, text, iconPosition) {
               </svg>
             </button>
             <div class="bt-selection-text-content bt-loading-text">${i18n.t("dialog.translating")}</div>
+            <button class="bt-speak-btn bt-selection-copy-btn" title="${i18n.t("selection.copy")}">
+              <svg class="bt-copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              <svg class="bt-copied-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            </button>
           </div>
-          <button class="bt-selection-copy-btn" title="${i18n.t("selection.copy")}">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-            <span class="bt-copy-feedback">${i18n.t("selection.copied")}</span>
-          </button>
         </div>
       </div>
     </div>
@@ -1760,11 +1888,26 @@ async function showTranslationPopup(selectionRect, text, iconPosition) {
   `;
   
   popup.style.position = 'fixed';
-  popup.style.zIndex = '9999999999';
-  
+
+  // Set via .value (never innerHTML) so selected markup is shown as text
+  const sourceInput = popup.querySelector('.bt-selection-source-input');
+  sourceInput.value = text;
+
   // Center popup based on SELECTION rect
   // First, add popup to DOM to get actual dimensions
-  document.body.appendChild(popup);
+  root.appendChild(popup);
+  selectionPopup = popup;
+  bringOverlayToFront();
+  autoResizeSourceInput(sourceInput);
+
+  // The popup widens once the translation arrives, so re-fit the height then
+  let lastInputWidth = sourceInput.clientWidth;
+  new ResizeObserver(() => {
+    if (sourceInput.clientWidth !== lastInputWidth) {
+      lastInputWidth = sourceInput.clientWidth;
+      autoResizeSourceInput(sourceInput);
+    }
+  }).observe(sourceInput);
   const tempRect = popup.getBoundingClientRect();
   const actualPopupWidth = tempRect.width;
   
@@ -1835,8 +1978,7 @@ async function showTranslationPopup(selectionRect, text, iconPosition) {
     popup.classList.add('bt-popup-top');
     popup.classList.remove('bt-popup-bottom');
   }
-  selectionPopup = popup;
-  
+
   // Store selectionRect for later use in readjustment
   popup._selectionRect = selectionRect;
 
@@ -1889,7 +2031,23 @@ async function showTranslationPopup(selectionRect, text, iconPosition) {
     hideTranslationPopup();
     hideTranslateIcon();
   });
-  
+
+  popup.querySelector('.bt-selection-pin').addEventListener('click', () => {
+    setSelectionPopupPinned(popup, !isSelectionPopupPinned);
+  });
+
+  // Typing in the source box re-translates after a short pause; Enter is handled
+  // in handleSelectionPopupKeydown because key events are stopped at the window
+  sourceInput.addEventListener('input', (e) => {
+    autoResizeSourceInput(sourceInput);
+    if (!e.isComposing) {
+      scheduleSelectionPopupTranslate(popup);
+    }
+  });
+  sourceInput.addEventListener('compositionend', () => {
+    scheduleSelectionPopupTranslate(popup);
+  });
+
   popup.querySelector('.bt-selection-source-select').addEventListener('change', (e) => {
     const providerSelect = popup.querySelector('.bt-selection-provider-select');
     const providerId = providerSelect ? providerSelect.value : null;
@@ -1905,7 +2063,7 @@ async function showTranslationPopup(selectionRect, text, iconPosition) {
       console.log('TransKit: Error saving source preference:', error.message);
     }
 
-    translateSelectionWithSource(text, e.target.value, popup, providerId, targetLang);
+    translateSelectionWithSource(getSelectionSourceText(popup), e.target.value, popup, providerId, targetLang);
   });
 
   popup.querySelector('.bt-selection-target-select').addEventListener('change', (e) => {
@@ -1924,7 +2082,7 @@ async function showTranslationPopup(selectionRect, text, iconPosition) {
       console.log('TransKit: Error saving target preference:', error.message);
     }
 
-    translateSelectionWithSource(text, sourceLang, popup, providerId, e.target.value);
+    translateSelectionWithSource(getSelectionSourceText(popup), sourceLang, popup, providerId, e.target.value);
   });
 
   // Populate provider selector
@@ -1933,7 +2091,7 @@ async function showTranslationPopup(selectionRect, text, iconPosition) {
     providerSelect.addEventListener('change', (e) => {
       const sourceLang = popup.querySelector('.bt-selection-source-select').value;
       const targetLang = popup.querySelector('.bt-selection-target-select').value;
-      translateSelectionWithSource(text, sourceLang, popup, e.target.value, targetLang);
+      translateSelectionWithSource(getSelectionSourceText(popup), sourceLang, popup, e.target.value, targetLang);
     });
   }
   
@@ -1949,14 +2107,21 @@ async function showTranslationPopup(selectionRect, text, iconPosition) {
 
   // Copy button
   const copyBtn = popup.querySelector('.bt-selection-copy-btn');
+  let copiedTimer = null;
   copyBtn.addEventListener('click', async () => {
     const textToCopy = popup.querySelector('.bt-selection-translated .bt-selection-text-content').textContent;
     if (!textToCopy || textToCopy === i18n.t("dialog.translating")) return;
 
     try {
       await navigator.clipboard.writeText(textToCopy);
+      // Icon swaps to a check mark; a floating label would be clipped by the scroll box
       copyBtn.classList.add('bt-copied');
-      setTimeout(() => copyBtn.classList.remove('bt-copied'), 2000);
+      copyBtn.title = i18n.t("selection.copied");
+      clearTimeout(copiedTimer);
+      copiedTimer = setTimeout(() => {
+        copyBtn.classList.remove('bt-copied');
+        copyBtn.title = i18n.t("selection.copy");
+      }, 2000);
     } catch (err) {
       console.error('Failed to copy:', err);
     }
@@ -1970,8 +2135,9 @@ async function showTranslationPopup(selectionRect, text, iconPosition) {
     if (btn.classList.contains('bt-speak-loading')) return;
 
     const sourceLang = popup.querySelector('.bt-selection-source-select').value;
-    const textToSpeak = text; // Original text
-    
+    const textToSpeak = getSelectionSourceText(popup);
+    if (!textToSpeak) return;
+
     btn.classList.add('bt-speak-loading');
     try {
       await tts.play(textToSpeak, sourceLang === 'auto' ? 'en' : sourceLang);
@@ -2011,22 +2177,99 @@ async function showTranslationPopup(selectionRect, text, iconPosition) {
 }
 
 function hideTranslationPopup() {
+  clearTimeout(selectionInputTimer);
+  selectionInputTimer = null;
+  isSelectionPopupPinned = false;
   if (selectionPopup) {
     selectionPopup.remove();
     selectionPopup = null;
   }
+  removeOverlayIfEmpty();
+}
+
+function getSelectionSourceText(popup) {
+  return popup.querySelector('.bt-selection-source-input').value.trim();
+}
+
+function autoResizeSourceInput(input) {
+  input.style.height = 'auto';
+  input.style.height = `${input.scrollHeight}px`;
+}
+
+function translateSelectionPopupNow(popup) {
+  clearTimeout(selectionInputTimer);
+  selectionInputTimer = null;
+  const providerSelect = popup.querySelector('.bt-selection-provider-select');
+  translateSelectionWithSource(
+    getSelectionSourceText(popup),
+    popup.querySelector('.bt-selection-source-select').value,
+    popup,
+    providerSelect ? providerSelect.value : null,
+    popup.querySelector('.bt-selection-target-select').value
+  );
+}
+
+function scheduleSelectionPopupTranslate(popup) {
+  clearTimeout(selectionInputTimer);
+  selectionInputTimer = setTimeout(() => translateSelectionPopupNow(popup), SELECTION_INPUT_DELAY_MS);
+}
+
+function loadTextIntoPinnedPopup(text) {
+  const input = selectionPopup.querySelector('.bt-selection-source-input');
+  if (input.value.trim() === text) return;
+  input.value = text;
+  autoResizeSourceInput(input);
+  translateSelectionPopupNow(selectionPopup);
+}
+
+function setSelectionPopupPinned(popup, pinned) {
+  isSelectionPopupPinned = pinned;
+  popup.classList.toggle('bt-pinned', pinned);
+  const pinBtn = popup.querySelector('.bt-selection-pin');
+  pinBtn.setAttribute('aria-pressed', String(pinned));
+  pinBtn.title = i18n.t(pinned ? "selection.unpin" : "selection.pin");
+  if (pinned) {
+    // No longer attached to a selection, so the arrow would point at nothing
+    popup.classList.remove('bt-popup-top', 'bt-popup-bottom');
+    // Anchor by the header so new content grows downward instead of moving it
+    if (popup.style.bottom) {
+      popup.style.top = `${popup.getBoundingClientRect().top}px`;
+      popup.style.bottom = '';
+    }
+  }
+}
+
+function handleSelectionPopupKeydown(e) {
+  if (!selectionPopup || !overlayRoot) return;
+  const input = selectionPopup.querySelector('.bt-selection-source-input');
+  if (overlayRoot.activeElement !== input) return;
+
+  // Enter during IME composition (Telex, Japanese, ...) only confirms the composition
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
+    e.preventDefault();
+    translateSelectionPopupNow(selectionPopup);
+  }
 }
 
 async function translateSelectionWithSource(text, sourceLang, popup, providerId = null, targetLangOverride = null) {
-  const settings = await getSettings();
-  const nativeLang = settings.nativeLanguageCode || 'vi';
-  const targetLang = targetLangOverride || nativeLang;
-  
+  const seq = ++selectionTranslateSeq;
+  const isStale = () => seq !== selectionTranslateSeq || !popup.isConnected;
   const translatedDiv = popup.querySelector('.bt-selection-translated .bt-selection-text-content');
-  
+
+  if (!text) {
+    translatedDiv.textContent = '';
+    translatedDiv.classList.remove('bt-loading-text');
+    return;
+  }
+
   translatedDiv.textContent = i18n.t("dialog.translating");
   translatedDiv.classList.add('bt-loading-text');
-  
+
+  const settings = await getSettings();
+  if (isStale()) return;
+  const nativeLang = settings.nativeLanguageCode || 'vi';
+  const targetLang = targetLangOverride || nativeLang;
+
   // If source and target are the same, return original text immediately
   if (sourceLang !== 'auto' && sourceLang === targetLang) {
     translatedDiv.textContent = text;
@@ -2045,7 +2288,8 @@ async function translateSelectionWithSource(text, sourceLang, popup, providerId 
       useAutoDetect: sourceLang === 'auto' ? true : (settings.useAutoDetect === true),
       providerId: providerId // Pass provider override
     });
-    
+    if (isStale()) return;
+
     if (res?.ok && res.result?.translation) {
       translatedDiv.textContent = res.result.translation;
       translatedDiv.classList.remove('bt-loading-text');
@@ -2059,6 +2303,7 @@ async function translateSelectionWithSource(text, sourceLang, popup, providerId 
     setTimeout(() => ensurePopupInViewport(popup, popup._selectionRect), 50);
     
   } catch (err) {
+    if (isStale()) return;
     translatedDiv.textContent = 'Error: ' + err.message;
     translatedDiv.classList.remove('bt-loading-text');
     // Readjust popup position even on error
@@ -2087,9 +2332,25 @@ function populateLanguageSelector(popup) {
 let lastPopupCloseTime = 0;
 
 function registerSelectionMode() {
+  // Warm the stylesheet cache so the first icon appears without a delay
+  loadOverlayCss().catch(() => {});
+
+  // Keys typed in the popup must not reach page shortcuts (YouTube "k", Gmail "c", ...)
+  // or TransKit's own input-field handlers. Stopping them at window capture keeps
+  // the default action (typing) but hides the event from later listeners.
+  ['keydown', 'keyup', 'keypress'].forEach((type) => {
+    window.addEventListener(type, (e) => {
+      if (!isEventFromOverlay(e)) return;
+      e.stopImmediatePropagation();
+      if (type === 'keydown') {
+        handleSelectionPopupKeydown(e);
+      }
+    }, true);
+  });
+
   document.addEventListener('mouseup', (e) => {
     // Ignore if clicking on icon or popup
-    if (e.target.closest('.bt-translate-icon') || e.target.closest('.bt-selection-popup')) {
+    if (isEventFromOverlay(e)) {
       return;
     }
 
@@ -2103,6 +2364,13 @@ function registerSelectionMode() {
       const text = selection.toString().trim();
       
       if (text && text.length > 0) {
+        // A pinned popup picks up every new selection directly
+        if (selectionPopup && isSelectionPopupPinned) {
+          selectedText = text;
+          loadTextIntoPinnedPopup(text);
+          return;
+        }
+
         // If popup is already open for this text, don't show icon
         if (selectionPopup && selectedText === text) {
           return;
@@ -2118,26 +2386,31 @@ function registerSelectionMode() {
   });
   
   document.addEventListener('mousedown', (e) => {
+    // Clicks inside the icon or popup are handled by their own listeners
+    if (isEventFromOverlay(e)) {
+      return;
+    }
+
     // 1. Handle Popup Open State
     if (selectionPopup) {
-      if (!selectionPopup.contains(e.target)) {
-        // Clicked outside popup
-        // Prevent default to PRESERVE selection
-        e.preventDefault();
-        e.stopPropagation();
-        hideTranslationPopup();
-        lastPopupCloseTime = Date.now();
+      // A pinned popup only closes through its × button
+      if (isSelectionPopupPinned) {
+        return;
       }
+      // Clicked outside popup
+      // Prevent default to PRESERVE selection
+      e.preventDefault();
+      e.stopPropagation();
+      hideTranslationPopup();
+      lastPopupCloseTime = Date.now();
       return;
     }
 
     // 2. Handle Icon Open State (Popup is closed)
     if (selectionIcon) {
-      if (!selectionIcon.contains(e.target)) {
-        // Clicked outside icon
-        // Let default behavior happen (selection clears)
-        hideTranslateIcon();
-      }
+      // Clicked outside icon
+      // Let default behavior happen (selection clears)
+      hideTranslateIcon();
     }
   });
 }
@@ -2201,57 +2474,52 @@ function getLanguageName(code) {
 }
 
 function makeDraggable(element, handle) {
-  let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
-  
-  handle.onmousedown = dragMouseDown;
-
-  function dragMouseDown(e) {
-    e = e || window.event;
-    // Only allow left click
-    if (e.button !== 0) return;
-    
-    // Don't drag if clicking on the close button
-    if (e.target.closest('.bt-selection-close')) return;
+  // Pointer capture keeps the drag alive outside the popup without touching
+  // the page's own document.onmouseup / onmousemove handlers
+  handle.addEventListener('pointerdown', (e) => {
+    // Only allow left click, and keep header buttons (pin, close) clickable
+    if (e.button !== 0 || e.target.closest('button')) return;
 
     e.preventDefault();
-    
-    // Convert bottom/right to top/left if needed for consistent math
+
+    // Convert bottom/right to top/left for consistent math. Clear them rather
+    // than set "auto" so ensurePopupInViewport sees top-based positioning.
     const rect = element.getBoundingClientRect();
-    element.style.bottom = 'auto';
-    element.style.right = 'auto';
-    element.style.top = rect.top + 'px';
-    element.style.left = rect.left + 'px';
+    element.style.bottom = '';
+    element.style.right = '';
+    element.style.top = `${rect.top}px`;
+    element.style.left = `${rect.left}px`;
 
-    // Get the mouse cursor position at startup
-    pos3 = e.clientX;
-    pos4 = e.clientY;
-    document.onmouseup = closeDragElement;
-    // Call a function whenever the cursor moves
-    document.onmousemove = elementDrag;
-  }
+    const offsetX = e.clientX - rect.left;
+    const offsetY = e.clientY - rect.top;
+    handle.setPointerCapture(e.pointerId);
 
-  function elementDrag(e) {
-    e = e || window.event;
-    e.preventDefault();
-    // Calculate the new cursor position
-    pos1 = pos3 - e.clientX;
-    pos2 = pos4 - e.clientY;
-    pos3 = e.clientX;
-    pos4 = e.clientY;
-    // Set the element's new position
-    element.style.top = (element.offsetTop - pos2) + "px";
-    element.style.left = (element.offsetLeft - pos1) + "px";
-    
-    // Remove arrow class when dragged to avoid visual artifacts
-    element.classList.remove('bt-popup-top', 'bt-popup-bottom');
-  }
+    const onMove = (moveEvent) => {
+      // Keep at least part of the header on screen so it can be dragged back
+      const maxLeft = window.innerWidth - 40;
+      const minLeft = 40 - rect.width;
+      const maxTop = window.innerHeight - 40;
+      const left = Math.min(maxLeft, Math.max(minLeft, moveEvent.clientX - offsetX));
+      const top = Math.min(maxTop, Math.max(0, moveEvent.clientY - offsetY));
+      element.style.left = `${left}px`;
+      element.style.top = `${top}px`;
 
-  function closeDragElement() {
-    // Stop moving when mouse button is released
-    document.onmouseup = null;
-    document.onmousemove = null;
-  }
+      // Remove arrow class when dragged to avoid visual artifacts
+      element.classList.remove('bt-popup-top', 'bt-popup-bottom');
+    };
+
+    const onEnd = () => {
+      handle.removeEventListener('pointermove', onMove);
+      handle.removeEventListener('pointerup', onEnd);
+      handle.removeEventListener('pointercancel', onEnd);
+    };
+
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onEnd);
+    handle.addEventListener('pointercancel', onEnd);
+  });
 }
+
 // Hover translate state
 let hoverModifierPressed = false;
 let hoverTranslateCache = new Map();

@@ -35,7 +35,6 @@
       "js": ["src/content-script-granularity.js", "src/content-script.js"],
       "css": [
         "assets/styles/inline-suggestion.css",
-        "assets/styles/selection.css",
         "assets/styles/hover-translate.css"
       ],
       "run_at": "document_idle",
