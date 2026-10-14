@@ -1,0 +1,49 @@
+name: E2E Tests
+
+on:
+  pull_request:
+    paths:
+      - "extension/**"
+      - "tests/**"
+      - "playwright.config.mjs"
+      - "package.json"
+      - ".github/workflows/e2e.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "extension/**"
+      - "tests/**"
+      - "playwright.config.mjs"
+      - "package.json"
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # package-lock.json is gitignored, so install from package.json
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E tests
+        run: npm run test:e2e
+
+      - name: Upload report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results
+          path: test-results/
+          retention-days: 7
