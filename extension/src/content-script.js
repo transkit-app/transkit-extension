@@ -452,10 +452,11 @@ async function handleAutoTranslation(element, parsed) {
     }
 
     const translation = res.result.translation;
-    const providerInfo = `${res.result.providerName || 'AI'} (${res.result.providerType || 'Bot'})`;
 
-    // Use buildInlineSuggestion with auto positioning
-    suggestion = buildInlineSuggestion(element, translation, providerInfo, 'auto');
+    // Use buildInlineSuggestion with auto positioning. No settings are passed:
+    // the suggestion closes on blur here, so a model switcher couldn't be used,
+    // and the footer just names the provider that produced the translation.
+    suggestion = buildInlineSuggestion(element, translation, res.result.providerName, 'auto');
     
     // Setup Tab/Esc handlers
     const handleKeydown = (ev) => {
@@ -577,7 +578,7 @@ function setFieldText(element, text, options = {}) {
   }
 }
 
-function buildInlineSuggestion(element, translatedText, providerInfo, position = 'auto', settings = {}) {
+function buildInlineSuggestion(element, translatedText, providerName, position = 'auto', settings = {}) {
   const container = document.createElement('div');
   container.className = 'bt-inline-suggestion bt-vars-container';
 
@@ -718,7 +719,7 @@ function buildInlineSuggestion(element, translatedText, providerInfo, position =
   container.addEventListener('pointerdown', preventBlur);
   
   const providerContainer = container.querySelector('.bt-suggestion-provider-container');
-  const providerSelect = populateProviderSelectorForSuggestion(providerContainer, settings);
+  const providerSelect = populateProviderSelectorForSuggestion(providerContainer, settings, providerName);
 
   root.appendChild(container);
   bringOverlayToFront();
@@ -734,16 +735,15 @@ function buildInlineSuggestion(element, translatedText, providerInfo, position =
   };
 }
 
-function populateProviderSelectorForSuggestion(container, settings) {
+function populateProviderSelectorForSuggestion(container, settings, usedProviderName) {
   const providers = settings.providers || [];
   const activeId = settings.activeProviderId || 'builtin';
 
   if (providers.length <= 1) {
-    // Show as a label tag
-    const provider = providers[0] || { name: 'Chrome Built-in AI' };
+    // Show as a label tag, preferring the provider that actually translated
     const tag = document.createElement('span');
     tag.className = 'bt-model-tag';
-    tag.textContent = provider.name;
+    tag.textContent = usedProviderName || providers[0]?.name || 'Chrome Built-in AI';
     container.appendChild(tag);
     return null;
   } else {
@@ -954,8 +954,7 @@ async function handleInstantTranslate(element) {
       if (res?.ok && res.result?.translation) {
         // Use 'auto' by default for smart positioning
         const position = domainConfig.position || 'auto';
-        const providerInfo = `${res.result.providerName || 'AI'} (${res.result.providerType || 'Bot'})`;
-        currentSuggestion = buildInlineSuggestion(element, res.result.translation, providerInfo, position, settings);
+        currentSuggestion = buildInlineSuggestion(element, res.result.translation, res.result.providerName, position, settings);
         setupSuggestionKeyHandlers(element, currentSuggestion);
 
         // Handle provider change
