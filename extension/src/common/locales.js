@@ -118,6 +118,9 @@ export const locales = {
     "selection.copy": "Copy",
     "selection.copied": "Copied!",
     "selection.settings": "⚙️ Settings",
+    "selection.pin": "Pin",
+    "selection.unpin": "Unpin",
+    "selection.inputPlaceholder": "Type or paste text to translate…",
     
     // Inline Suggestion
     "suggestion.hint": "<kbd>Tab</kbd> to apply • <kbd>Esc</kbd> to dismiss",
@@ -262,6 +265,9 @@ export const locales = {
     "selection.copy": "Sao chép",
     "selection.copied": "Đã sao chép!",
     "selection.settings": "⚙️ Cài đặt",
+    "selection.pin": "Ghim",
+    "selection.unpin": "Bỏ ghim",
+    "selection.inputPlaceholder": "Nhập hoặc dán văn bản cần dịch…",
     
     // Inline Suggestion
     "suggestion.hint": "<kbd>Tab</kbd> để áp dụng • <kbd>Esc</kbd> để đóng",
