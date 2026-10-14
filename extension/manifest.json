@@ -33,10 +33,7 @@
     {
       "matches": ["<all_urls>"],
       "js": ["src/content-script-granularity.js", "src/content-script.js"],
-      "css": [
-        "assets/styles/inline-suggestion.css",
-        "assets/styles/hover-translate.css"
-      ],
+      "css": ["assets/styles/hover-translate.css"],
       "run_at": "document_idle",
       "all_frames": true
     }

@@ -28,17 +28,14 @@ let overlayRoot = null;
 let overlayCssPromise = null;
 
 const OVERLAY_HOST_TAG = "transkit-overlay";
-const OVERLAY_STYLESHEETS = ["assets/styles/tokens.css", "assets/styles/selection.css"];
+// Order matters: inline-suggestion.css refines the suggestion rules in dialogs.css
+const OVERLAY_STYLESHEETS = [
+  "assets/styles/tokens.css",
+  "assets/styles/dialogs.css",
+  "assets/styles/inline-suggestion.css",
+  "assets/styles/selection.css"
+];
 const SELECTION_INPUT_DELAY_MS = 600;
-
-const commonStyles = {
-  fontFamily: "system-ui, sans-serif",
-  background: "#FFFF",
-  color: "#1C2024",
-  borderRadius: "0.375rem",
-  boxShadow: "0 .375rem 1.5rem #0000000f",
-  zIndex: "9999999999"
-};
 
 // Global error handler for extension context invalidation
 window.addEventListener('error', (event) => {
@@ -115,7 +112,8 @@ window.addEventListener('unhandledrejection', (event) => {
       console.log('TransKit: Error setting up storage listener:', storageError.message);
     }
     
-    injectGlobalStylesheet();
+    // Warm the overlay stylesheet cache so the first UI renders fully styled
+    loadOverlayCss().catch(() => {});
     registerAutoDetection();
     registerInstantMode();
     registerSelectionMode();
@@ -132,28 +130,6 @@ window.addEventListener('unhandledrejection', (event) => {
     }
   }
 })();
-
-function injectGlobalStylesheet() {
-  try {
-    if (!isExtensionContextValid()) {
-      return;
-    }
-    
-    const href = chrome.runtime.getURL("assets/styles/dialogs.css");
-    if (![...document.styleSheets].some((s) => s.href === href)) {
-      const link = document.createElement("link");
-      link.rel = "stylesheet";
-      link.href = href;
-      document.head.appendChild(link);
-    }
-  } catch (error) {
-    console.log('TransKit: Error injecting stylesheet:', error.message);
-    if (error.message.includes('Extension context invalidated') || 
-        error.message.includes('Could not establish connection')) {
-      cleanupExtensionElements();
-    }
-  }
-}
 
 function isEditableElement(element) {
   if (!element) return false;
@@ -206,27 +182,6 @@ function parseFieldTextAndCommand(element) {
   const precedingText = value.slice(0, match.index).trimEnd();
   return { text: precedingText, languageRaw };
 }
-
-function createOverlayShadowHost() {
-  const host = document.createElement("div");
-  host.style.all = "initial";
-  host.style.position = "fixed";
-  host.style.zIndex = commonStyles.zIndex;
-  host.style.inset = "0";
-  host.style.pointerEvents = "none"; // Ensure clicks pass through the host
-  document.documentElement.appendChild(host);
-  return host.attachShadow({ mode: "closed" });
-}
-
-function attachStylesheetToShadowRoot(shadowRoot) {
-  const href = chrome.runtime.getURL("assets/styles/dialogs.css");
-  const link = document.createElement("link");
-  link.rel = "stylesheet";
-  link.href = href;
-  shadowRoot.appendChild(link);
-}
-
-
 
 async function getSettings() {
   if (!isExtensionContextValid()) {
@@ -360,16 +315,23 @@ function showToast(message) {
 
   host.innerHTML = `
     <div class="bt-toast-notify-content">
-      <span class="bt-toast-notify-icon">${icon}</span>
-      <span class="bt-toast-notify-text">${message}</span>
+      <span class="bt-toast-notify-icon"></span>
+      <span class="bt-toast-notify-text"></span>
     </div>
   `;
-  document.documentElement.appendChild(host);
+  // Messages can carry provider errors, so never parse them as HTML
+  host.querySelector('.bt-toast-notify-icon').textContent = icon;
+  host.querySelector('.bt-toast-notify-text').textContent = message;
+  getOverlayRoot().appendChild(host);
+  bringOverlayToFront();
 
   // Fade out animation - close faster
   setTimeout(() => {
     host.classList.add('bt-toast-notify-exit');
-    setTimeout(() => host.remove(), 300);
+    setTimeout(() => {
+      host.remove();
+      removeOverlayIfEmpty();
+    }, 300);
   }, 1500);
 }
 
@@ -490,10 +452,11 @@ async function handleAutoTranslation(element, parsed) {
     }
 
     const translation = res.result.translation;
-    const providerInfo = `${res.result.providerName || 'AI'} (${res.result.providerType || 'Bot'})`;
 
-    // Use buildInlineSuggestion with auto positioning
-    suggestion = buildInlineSuggestion(element, translation, providerInfo, 'auto');
+    // Use buildInlineSuggestion with auto positioning. No settings are passed:
+    // the suggestion closes on blur here, so a model switcher couldn't be used,
+    // and the footer just names the provider that produced the translation.
+    suggestion = buildInlineSuggestion(element, translation, res.result.providerName, 'auto');
     
     // Setup Tab/Esc handlers
     const handleKeydown = (ev) => {
@@ -615,14 +578,13 @@ function setFieldText(element, text, options = {}) {
   }
 }
 
-function buildInlineSuggestion(element, translatedText, providerInfo, position = 'auto', settings = {}) {
+function buildInlineSuggestion(element, translatedText, providerName, position = 'auto', settings = {}) {
   const container = document.createElement('div');
   container.className = 'bt-inline-suggestion bt-vars-container';
 
   // Position relative to input
   const rect = element.getBoundingClientRect();
   container.style.position = 'fixed';
-  container.style.zIndex = '9999999999';
 
   // Smart width calculation to prevent UI breaking on small inputs
   const minPopupWidth = 320;
@@ -688,7 +650,8 @@ function buildInlineSuggestion(element, translatedText, providerInfo, position =
   }
   
   // Add to DOM first to get dimensions
-  document.body.appendChild(container);
+  const root = getOverlayRoot();
+  root.appendChild(container);
   
   // Get container dimensions and adjust position if needed
   const containerRect = container.getBoundingClientRect();
@@ -732,13 +695,15 @@ function buildInlineSuggestion(element, translatedText, providerInfo, position =
   container.innerHTML = `
     <div class="bt-suggestion-content">
       ${iconUrl ? `<img src="${iconUrl}" class="bt-suggestion-icon" alt="TransKit" />` : '<span class="bt-suggestion-icon">🔄</span>'}
-      <span class="bt-suggestion-text">${translatedText}</span>
+      <span class="bt-suggestion-text"></span>
       <kbd class="bt-suggestion-tab-hint">Tab</kbd>
     </div>
     <div class="bt-suggestion-footer">
       <div class="bt-suggestion-provider-container"></div>
     </div>
   `;
+  // Translations are model output, so never parse them as HTML
+  container.querySelector('.bt-suggestion-text').textContent = translatedText;
   
   // Prevent clicking on the suggestion from blurring the input
   // EXCEPT for select elements (allow clicking model selector)
@@ -754,9 +719,10 @@ function buildInlineSuggestion(element, translatedText, providerInfo, position =
   container.addEventListener('pointerdown', preventBlur);
   
   const providerContainer = container.querySelector('.bt-suggestion-provider-container');
-  const providerSelect = populateProviderSelectorForSuggestion(providerContainer, settings);
+  const providerSelect = populateProviderSelectorForSuggestion(providerContainer, settings, providerName);
 
-  document.body.appendChild(container);
+  root.appendChild(container);
+  bringOverlayToFront();
 
   return {
     element: container,
@@ -764,20 +730,20 @@ function buildInlineSuggestion(element, translatedText, providerInfo, position =
     providerSelect,
     destroy: () => {
       container.remove();
+      removeOverlayIfEmpty();
     }
   };
 }
 
-function populateProviderSelectorForSuggestion(container, settings) {
+function populateProviderSelectorForSuggestion(container, settings, usedProviderName) {
   const providers = settings.providers || [];
   const activeId = settings.activeProviderId || 'builtin';
 
   if (providers.length <= 1) {
-    // Show as a label tag
-    const provider = providers[0] || { name: 'Chrome Built-in AI' };
+    // Show as a label tag, preferring the provider that actually translated
     const tag = document.createElement('span');
     tag.className = 'bt-model-tag';
-    tag.textContent = provider.name;
+    tag.textContent = usedProviderName || providers[0]?.name || 'Chrome Built-in AI';
     container.appendChild(tag);
     return null;
   } else {
@@ -988,8 +954,7 @@ async function handleInstantTranslate(element) {
       if (res?.ok && res.result?.translation) {
         // Use 'auto' by default for smart positioning
         const position = domainConfig.position || 'auto';
-        const providerInfo = `${res.result.providerName || 'AI'} (${res.result.providerType || 'Bot'})`;
-        currentSuggestion = buildInlineSuggestion(element, res.result.translation, providerInfo, position, settings);
+        currentSuggestion = buildInlineSuggestion(element, res.result.translation, res.result.providerName, position, settings);
         setupSuggestionKeyHandlers(element, currentSuggestion);
 
         // Handle provider change
@@ -1073,7 +1038,8 @@ function registerInstantMode() {
   document.addEventListener('mousedown', (e) => {
     if (currentSuggestion) {
       const isInsideInput = e.target === getActiveEditableElement();
-      const isInsideSuggestion = currentSuggestion.element.contains(e.target);
+      // The suggestion lives in the closed overlay, so e.target is the host
+      const isInsideSuggestion = isEventFromOverlay(e);
       
       if (!isInsideInput && !isInsideSuggestion) {
         // Cleanup key handler if it exists
@@ -1261,6 +1227,7 @@ function registerInstantToggleShortcut() {
 function registerInstantLabelIndicator() {
   // Create label element
   const label = document.createElement('div');
+  label.className = 'bt-instant-label';
   let iconUrl;
   try {
     iconUrl = isExtensionContextValid() ? chrome.runtime.getURL('assets/icons/icon-19.png') : '';
@@ -1294,7 +1261,6 @@ function registerInstantLabelIndicator() {
     font-family: system-ui, -apple-system, sans-serif;
     font-size: 12px;
     font-weight: 500;
-    z-index: 9999999;
     pointer-events: none;
     display: none;
     align-items: center;
@@ -1307,10 +1273,10 @@ function registerInstantLabelIndicator() {
     animation: labelFadeIn 0.3s ease-out;
   `;
 
-  document.body.appendChild(label);
-
+  // Attached to the overlay only while visible
   let currentSettings = null;
   let labelTimeout = null;
+  let labelRemoveTimeout = null;
 
   // Load initial settings
   getSettings().then(s => {
@@ -1345,10 +1311,13 @@ function registerInstantLabelIndicator() {
     }
     label.style.transition = 'opacity 0.3s ease-out';
     label.style.opacity = '0';
-    setTimeout(() => {
+    clearTimeout(labelRemoveTimeout);
+    labelRemoveTimeout = setTimeout(() => {
       label.style.display = 'none';
       label.style.transition = 'none';
       label.style.opacity = '0.88';
+      label.remove();
+      removeOverlayIfEmpty();
     }, 300);
   }
 
@@ -1371,7 +1340,10 @@ function registerInstantLabelIndicator() {
     // Update label text with i18n
     labelText.textContent = i18n.t("label.instant") || "Instant";
 
-    // Show label
+    // Show label (cancel a pending fade-out removal from a previous blur)
+    clearTimeout(labelRemoveTimeout);
+    getOverlayRoot().appendChild(label);
+    bringOverlayToFront();
     label.style.left = `${offsetX}px`;
     label.style.top = `${offsetY}px`;
     label.style.display = 'flex';
@@ -1396,12 +1368,15 @@ function registerInstantLabelIndicator() {
 }
 
 // ============================================
-// SELECT-TO-TRANSLATE MODE
+// ISOLATED UI OVERLAY
 // ============================================
 
-// The icon and popup render inside a closed Shadow DOM so page CSS cannot
+// Every floating UI (selection icon and popup, inline suggestion, toasts,
+// instant label) renders inside one closed Shadow DOM so page CSS cannot
 // leak in, and the host is promoted to the top layer (Popover API) so page
 // transforms / z-index / overflow cannot shift or hide it.
+let overlayCssText = null;
+
 function loadOverlayCss() {
   if (!overlayCssPromise) {
     overlayCssPromise = Promise.all(
@@ -1409,14 +1384,17 @@ function loadOverlayCss() {
         fetch(chrome.runtime.getURL(path)).then((res) => res.text())
       )
     )
-      .then((sheets) =>
-        sheets
+      .then((sheets) => {
+        overlayCssText = sheets
           .join("\n")
           // @import would resolve against the page URL inside a <style> tag
           .replace(/^\s*@import[^;]+;/gm, "")
           // rem follows the page's <html> font-size (often 62.5%), so pin to px
           .replace(/(-?\d*\.?\d+)rem\b/g, (_, n) => `${parseFloat(n) * 16}px`)
-      )
+          .concat(`
+.bt-translate-icon, .bt-selection-popup, .bt-inline-suggestion, .bt-toast-notify { pointer-events: auto; }`);
+        return overlayCssText;
+      })
       .catch((error) => {
         overlayCssPromise = null;
         throw error;
@@ -1425,14 +1403,12 @@ function loadOverlayCss() {
   return overlayCssPromise;
 }
 
-async function ensureOverlayRoot() {
+// Synchronous so callers that build UI immediately (suggestions, toasts) can
+// use it. The stylesheet is preloaded at bootstrap; if it isn't ready yet the
+// <style> is filled in as soon as it arrives.
+function getOverlayRoot() {
   if (overlayHost?.isConnected && overlayRoot) {
     return overlayRoot;
-  }
-
-  const css = await loadOverlayCss();
-  if (overlayHost?.isConnected && overlayRoot) {
-    return overlayRoot; // Created by a concurrent call
   }
 
   // Custom tag so generic page selectors (div, span, ...) never match the host
@@ -1456,9 +1432,13 @@ async function ensureOverlayRoot() {
 
   const root = host.attachShadow({ mode: "closed" });
   const style = document.createElement("style");
-  style.textContent = `${css}
-:host { font-size: 16px; line-height: normal; }
-.bt-translate-icon, .bt-selection-popup { pointer-events: auto; }`;
+  if (overlayCssText) {
+    style.textContent = overlayCssText;
+  } else {
+    loadOverlayCss()
+      .then((css) => { style.textContent = css; })
+      .catch((error) => console.log('TransKit: Error loading overlay styles:', error.message));
+  }
   root.appendChild(style);
 
   document.documentElement.appendChild(host);
@@ -1472,9 +1452,17 @@ async function ensureOverlayRoot() {
   return root;
 }
 
+// For UI that measures itself right after insertion and can afford to wait
+async function ensureOverlayRoot() {
+  await loadOverlayCss();
+  return getOverlayRoot();
+}
+
 // Re-show so the overlay sits above any top-layer element the page opened since
 function bringOverlayToFront() {
   if (!overlayHost || typeof overlayHost.showPopover !== "function") return;
+  // Hiding a popover that contains focus would move focus out of our input
+  if (overlayRoot?.activeElement) return;
   try {
     if (overlayHost.matches(":popover-open")) {
       overlayHost.hidePopover();
@@ -1484,7 +1472,9 @@ function bringOverlayToFront() {
 }
 
 function removeOverlayIfEmpty() {
-  if (overlayHost && !selectionIcon && !selectionPopup) {
+  // (:scope doesn't match a ShadowRoot, so check its children directly)
+  const hasContent = [...(overlayRoot?.children || [])].some((el) => el.tagName !== "STYLE");
+  if (overlayHost && !hasContent) {
     overlayHost.remove();
     overlayHost = null;
     overlayRoot = null;
@@ -1494,6 +1484,10 @@ function removeOverlayIfEmpty() {
 function isEventFromOverlay(e) {
   return !!overlayHost && e.composedPath().includes(overlayHost);
 }
+
+// ============================================
+// SELECT-TO-TRANSLATE MODE
+// ============================================
 
 async function showTranslateIcon(x, y, selection) {
   hideTranslateIcon();
@@ -2053,15 +2047,14 @@ async function showTranslationPopup(selectionRect, text, iconPosition) {
     const providerId = providerSelect ? providerSelect.value : null;
     const targetLang = popup.querySelector('.bt-selection-target-select').value;
     
-    // Save preference
-    try {
-      safeRuntimeCall(() => chrome.runtime.sendMessage({ 
-        type: 'set-settings', 
-        settings: { ...settings, selectionLastSource: e.target.value } 
-      }));
-    } catch (error) {
+    // Save preference. Send only the changed field: the popup's settings snapshot is stale and
+    // writing it back would revert anything changed since the popup opened
+    safeRuntimeCall(() => chrome.runtime.sendMessage({
+      type: 'update-settings',
+      patch: { selectionLastSource: e.target.value }
+    })).catch((error) => {
       console.log('TransKit: Error saving source preference:', error.message);
-    }
+    });
 
     translateSelectionWithSource(getSelectionSourceText(popup), e.target.value, popup, providerId, targetLang);
   });
@@ -2071,16 +2064,14 @@ async function showTranslationPopup(selectionRect, text, iconPosition) {
     const providerId = providerSelect ? providerSelect.value : null;
     const sourceLang = popup.querySelector('.bt-selection-source-select').value;
 
-    // Save preference
-    console.log('Saving selectionLastTarget:', e.target.value);
-    try {
-      safeRuntimeCall(() => chrome.runtime.sendMessage({ 
-        type: 'set-settings', 
-        settings: { ...settings, selectionLastTarget: e.target.value } 
-      }));
-    } catch (error) {
+    // Save preference. Send only the changed field: the popup's settings snapshot is stale and
+    // writing it back would revert anything changed since the popup opened
+    safeRuntimeCall(() => chrome.runtime.sendMessage({
+      type: 'update-settings',
+      patch: { selectionLastTarget: e.target.value }
+    })).catch((error) => {
       console.log('TransKit: Error saving target preference:', error.message);
-    }
+    });
 
     translateSelectionWithSource(getSelectionSourceText(popup), sourceLang, popup, providerId, e.target.value);
   });
@@ -2332,9 +2323,6 @@ function populateLanguageSelector(popup) {
 let lastPopupCloseTime = 0;
 
 function registerSelectionMode() {
-  // Warm the stylesheet cache so the first icon appears without a delay
-  loadOverlayCss().catch(() => {});
-
   // Keys typed in the popup must not reach page shortcuts (YouTube "k", Gmail "c", ...)
   // or TransKit's own input-field handlers. Stopping them at window capture keeps
   // the default action (typing) but hides the event from later listeners.
