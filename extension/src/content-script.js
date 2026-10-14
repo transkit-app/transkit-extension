@@ -2053,15 +2053,14 @@ async function showTranslationPopup(selectionRect, text, iconPosition) {
     const providerId = providerSelect ? providerSelect.value : null;
     const targetLang = popup.querySelector('.bt-selection-target-select').value;
     
-    // Save preference
-    try {
-      safeRuntimeCall(() => chrome.runtime.sendMessage({ 
-        type: 'set-settings', 
-        settings: { ...settings, selectionLastSource: e.target.value } 
-      }));
-    } catch (error) {
+    // Save preference. Send only the changed field: the popup's settings snapshot is stale and
+    // writing it back would revert anything changed since the popup opened
+    safeRuntimeCall(() => chrome.runtime.sendMessage({
+      type: 'update-settings',
+      patch: { selectionLastSource: e.target.value }
+    })).catch((error) => {
       console.log('TransKit: Error saving source preference:', error.message);
-    }
+    });
 
     translateSelectionWithSource(getSelectionSourceText(popup), e.target.value, popup, providerId, targetLang);
   });
@@ -2071,16 +2070,14 @@ async function showTranslationPopup(selectionRect, text, iconPosition) {
     const providerId = providerSelect ? providerSelect.value : null;
     const sourceLang = popup.querySelector('.bt-selection-source-select').value;
 
-    // Save preference
-    console.log('Saving selectionLastTarget:', e.target.value);
-    try {
-      safeRuntimeCall(() => chrome.runtime.sendMessage({ 
-        type: 'set-settings', 
-        settings: { ...settings, selectionLastTarget: e.target.value } 
-      }));
-    } catch (error) {
+    // Save preference. Send only the changed field: the popup's settings snapshot is stale and
+    // writing it back would revert anything changed since the popup opened
+    safeRuntimeCall(() => chrome.runtime.sendMessage({
+      type: 'update-settings',
+      patch: { selectionLastTarget: e.target.value }
+    })).catch((error) => {
       console.log('TransKit: Error saving target preference:', error.message);
-    }
+    });
 
     translateSelectionWithSource(getSelectionSourceText(popup), sourceLang, popup, providerId, e.target.value);
   });

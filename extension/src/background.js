@@ -110,6 +110,18 @@ async function writeSettings(next) {
   return next;
 }
 
+// Merge a partial update into the latest stored settings. Updates are chained
+// so two quick changes can't both read the old value and overwrite each other.
+let settingsUpdateQueue = Promise.resolve();
+function updateSettings(patch) {
+  const run = settingsUpdateQueue.then(async () => {
+    const current = await readSettings();
+    return writeSettings({ ...current, ...patch });
+  });
+  settingsUpdateQueue = run.catch(() => {});
+  return run;
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "ping") {
     sendResponse({ ok: true });
@@ -125,6 +137,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     writeSettings(message.settings).then((s) =>
       sendResponse({ ok: true, settings: s })
     );
+    return true;
+  }
+
+  if (message?.type === "update-settings") {
+    updateSettings(message.patch)
+      .then((s) => sendResponse({ ok: true, settings: s }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
 
