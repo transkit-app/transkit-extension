@@ -235,24 +235,41 @@ export async function readStoredSettings(serviceWorker) {
   });
 }
 
-// Drag-selects text inside a page element, like a user would
-export async function dragSelect(page, selector, { width = 300 } = {}) {
+// Drag-selects text inside a page element, like a user would: the first
+// `width` px of the first line, or the whole element with { whole: true }
+// (use that when the exact text matters; glyph widths differ across OSes)
+export async function dragSelect(
+  page,
+  selector,
+  { width = 300, whole = false } = {}
+) {
   const box = await page.locator(selector).boundingBox();
   const y = box.y + Math.min(box.height / 2, 12);
   await page.mouse.move(box.x + 2, y);
   await page.mouse.down();
-  await page.mouse.move(box.x + Math.min(width, box.width - 2), y, {
-    steps: 5
-  });
+  if (whole) {
+    await page.mouse.move(box.x + box.width - 2, box.y + box.height - 2, {
+      steps: 5
+    });
+  } else {
+    await page.mouse.move(box.x + Math.min(width, box.width - 2), y, {
+      steps: 5
+    });
+  }
   await page.mouse.up();
 }
 
 // Selects text and opens the popup through the icon. Retries the selection
 // because content scripts may still be bootstrapping right after page load.
-export async function openSelectionPopup(page, overlay, selector) {
+export async function openSelectionPopup(
+  page,
+  overlay,
+  selector,
+  selectOptions = {}
+) {
   await expect(async () => {
     await page.mouse.click(1000, 700);
-    await dragSelect(page, selector);
+    await dragSelect(page, selector, selectOptions);
     await expect
       .poll(() => overlay.exists("bt-translate-icon"), { timeout: 1500 })
       .toBe(true);

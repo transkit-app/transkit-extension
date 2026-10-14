@@ -90,7 +90,7 @@ test.describe("Instant mode", () => {
     }
   });
 
-  test("shows the label, suggests after a pause, and switches model", async ({
+  test("shows the label and suggests after a pause; clicking the model switcher keeps it", async ({
     page,
     overlay
   }) => {
@@ -100,20 +100,29 @@ test.describe("Instant mode", () => {
       .poll(() => overlay.text(SUGGESTION_TEXT))
       .toBe("mock-a:en:good night");
 
-    // Clicking the model switcher must not dismiss the suggestion
     await overlay.click("bt-suggestion-provider-select");
     await page.waitForTimeout(300);
     expect(await overlay.exists(SUGGESTION)).toBe(true);
+  });
 
+  test("switching model re-translates, and Tab applies from the switcher", async ({
+    page,
+    overlay
+  }) => {
+    await typeUntilSuggestion(page, overlay, "good night");
+
+    // The state after picking an option: dropdown closed, focus on the
+    // switcher. (A mouse click would leave the native dropdown open, which
+    // swallows Tab on Linux.)
     await overlay.eval(
       "bt-suggestion-provider-select",
-      'this.value = "mock-b"; this.dispatchEvent(new Event("change"));'
+      'this.focus(); this.value = "mock-b"; this.dispatchEvent(new Event("change"));'
     );
     await expect
       .poll(() => overlay.text(SUGGESTION_TEXT))
       .toBe("mock-b:en:good night");
 
-    // Tab still applies while focus is on the switcher inside the overlay
+    // Focus is inside the overlay, whose key events are hidden from the page
     await page.keyboard.press("Tab");
     await expect(page.locator("#field")).toHaveValue("mock-b:en:good night");
   });

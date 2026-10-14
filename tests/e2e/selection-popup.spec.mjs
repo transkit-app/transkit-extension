@@ -46,14 +46,12 @@ test.describe("Select-to-Translate popup", () => {
     page,
     overlay
   }) => {
-    await openSelectionPopup(page, overlay, "#p2");
+    const markup = '<img src=x onerror="window.__xss=1"> markup shown as text.';
+    await openSelectionPopup(page, overlay, "#p2", { whole: true });
 
-    expect(await overlay.eval(SOURCE, "return this.value")).toContain(
-      "<img src=x onerror="
-    );
-    await expect
-      .poll(() => resultText(overlay))
-      .toMatch(/^mock-a:vi:<img src=x onerror=/);
+    expect(await overlay.eval(SOURCE, "return this.value")).toBe(markup);
+    // Sent as plain text: the markup-looking part must not be stripped
+    await expect.poll(() => resultText(overlay)).toBe(`mock-a:vi:${markup}`);
     expect(await page.evaluate(() => window.__xss)).toBeUndefined();
   });
 
