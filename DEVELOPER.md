@@ -194,6 +194,12 @@ The suite does not cover everything. After a change, also check the affected flo
 -   Sites such as YouTube, Gmail and pages with `<dialog>` modals
 -   Reloading the extension while a page is open: content scripts must not throw "Extension context invalidated" (see `EXTENSION_CONTEXT_FIX.md`)
 
+### Releasing
+
+1.  Bump `version` in both `extension/manifest.json` and `package.json`, and add a changelog entry to `README.md`.
+2.  Run `npm run test:e2e`.
+3.  Run `npm run package` to build `dist/transkit-<version>.zip` (hidden files excluded), then upload it to the Chrome Web Store.
+
 ## Key APIs Used
 
 -   `chrome.runtime`: messaging and lifecycle.

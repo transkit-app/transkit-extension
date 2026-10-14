@@ -13,7 +13,7 @@
 - **Instant Domain Mode**: Auto-translate on specific domains (chat apps, AI assistants) with inline suggestions
 - **Quick Toggle**: Press `Ctrl+Shift+I` to enable/disable instant mode (auto-adds domain if not in list)
 - **Instant Label Indicator**: Visual badge above input fields when instant mode is active
-- **Select-to-Translate**: Highlight text to translate with a draggable, feature-rich popup
+- **Select-to-Translate**: Highlight text to translate with a draggable, feature-rich popup. Pin it to keep it open while you read, or type your own text into it
 - **Smart Language Detection**: Automatically detects source language
 - **Customizable Aliases**: Create shortcuts for your most-used languages
 - **Non-blocking UI**: Continue working while translations process
@@ -82,12 +82,21 @@ Enable in settings for automatic translation on specific domains (Telegram, Disc
 - Press **Esc** to dismiss
 - Press **Delete/Backspace** to dismiss and edit
 
+### Select-to-Translate
+
+Highlight any text on a page and click the TransKit icon that appears.
+
+- **Pin** the popup (📌) to keep it open: clicking elsewhere won't close it, and every new text you highlight is translated in the same popup.
+- **Type or paste your own text** into the original-text box. The translation updates when you stop typing, or press **Enter** to translate right away (**Shift+Enter** for a new line).
+- Switch source/target language or model, listen with text-to-speech, and copy the result from the popup.
+
 ### Keyboard Shortcuts
 
 - **Tab**: Apply suggested translation (Manual & Instant mode)
 - **Esc**: Dismiss suggestion or popup
 - **Delete/Backspace**: Dismiss suggestion and continue editing
 - **Ctrl+Shift+I** (or **Cmd+Shift+I** on Mac): Toggle Instant Translate for the current domain
+- **Enter** / **Shift+Enter**: Translate now / new line in the Select-to-Translate source box
 
 ## Configuration
 
@@ -124,6 +133,17 @@ Open the extension popup to customize:
 - gemini.google.com (top)
 
 ## Changelog
+
+### v1.3.0
+- **New**: **Pinned Translation Popup** - Pin the Select-to-Translate popup to keep it open; new selections are translated in place.
+- **New**: **Type to Translate** - Type or paste any text into the popup's original-text box. It translates as you pause, and Enter translates immediately (works with Vietnamese, Japanese and other IME input).
+- **Improved**: **Consistent Look on Every Site** - The popup, inline suggestions, toasts and the Instant label are now isolated from page styles. Fixes shifted layouts and tiny text on some websites.
+- **Improved**: **Copy Button** - No longer covers the end of the translation, and shows a check mark when copied.
+- **Fix**: Translation popup appeared off-screen on YouTube.
+- **Fix**: Changing languages in the popup could reset other settings.
+- **Fix**: The `!!lang` suggestion always showed "Chrome Built-in AI" instead of the provider actually used.
+- **Fix**: Tab now applies an Instant suggestion after switching its model.
+- **Security**: Selected text and translations are always displayed as plain text, never as HTML.
 
 ### v1.2.1
 - **New**: **Line-by-Line Translation** - Default granularity changed from "block" to "line" for more precise hover translations.
